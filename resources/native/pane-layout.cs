@@ -9,7 +9,7 @@ public static class PaneLayout {
     // Each leaf reserves host-owned chrome above its native content. Zero keeps
     // existing callers' outer-window geometry unchanged.
     public static Rectangle Content(PaneScope scope,Rectangle slot){
-        return Rectangle.FromLTRB(slot.Left,slot.Top+scope.HeaderHeight,slot.Right,slot.Bottom);
+        return Rectangle.FromLTRB(slot.Left,Math.Min(slot.Bottom,slot.Top+scope.HeaderHeight),slot.Right,slot.Bottom);
     }
     public static Rectangle Slot(PaneScope scope,PaneGroup group){
         var frame=group.ResolvedFrame;
@@ -66,7 +66,13 @@ public static class PaneLayout {
         // retain their quadrant; vertical siblings reclaim only local height.
         var unused=new Dictionary<string,Rectangle>();
         ResolveNode(candidate,scope.Viewport,id=>Size.Empty,unused);
-        if(!ResolvePresentation(candidate,scope.Viewport,scope,minimum,frames))return false;
+        if(!ResolvePresentation(candidate,scope.Viewport,scope,minimum,frames)){
+            if(!scope.CompactViewport)return false;
+            scope.CompactGroup=scope.ActiveGroup!=null&&scope.Groups.ContainsKey(scope.ActiveGroup)?scope.ActiveGroup:scope.Order.FirstOrDefault(id=>scope.Groups[id].Presentation!="minimized")??scope.Order[0];
+            foreach(var id in scope.Order)scope.Groups[id].ResolvedFrame=Content(scope,scope.Viewport);
+            return true;
+        }
+        scope.CompactGroup=null;
         scope.Root=candidate;
         foreach(var pair in frames)scope.Groups[pair.Key].ResolvedFrame=Content(scope,pair.Value);
         return true;

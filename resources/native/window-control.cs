@@ -535,6 +535,13 @@ internal static class PapersGestures {
     }}
     static long rightDownAt;
     static long Now {get{return (long)(Stopwatch.GetTimestamp()*1000.0/Stopwatch.Frequency);}}
+    const string HorizontalResizeProperty="Papers.DockedHorizontalResize";
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    static extern IntPtr GetProp(IntPtr hwnd,string name);
+    const string HorizontalRequestProperty="Papers.DockedHorizontalRequest";
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    static extern bool SetProp(IntPtr hwnd,string name,IntPtr value);
+    static bool horizontalChord,horizontalResize;
     static bool pickup, middleScale, proportional;
     static double currentScale=1;
     static readonly Dictionary<IntPtr,uint> temporarySelection=new Dictionary<IntPtr,uint>();
@@ -646,6 +653,23 @@ internal static class PapersGestures {
         if(code<0)return CallNextHookEx(keyHook,code,message,data);
         var k=(KeyData)Marshal.PtrToStructure(data,typeof(KeyData));bool up=message.ToInt32()==0x101||message.ToInt32()==0x105;
         int key=(int)k.Key;
+        if(key==0x20&&horizontalChord){
+            if(up){horizontalChord=false;Queue(FinishDrag);}
+            return new IntPtr(1);
+        }
+        if(key==0x1B&&!up&&horizontalResize){Queue(FinishDrag);return new IntPtr(1);}
+        if(key==0x20&&!up&&!dragging&&Down(0x11)&&Down(0x10)&&!Down(0x12)){
+            Point point;
+            if(GetCursorPos(out point)){
+                var hwnd=At(point);
+                int edges=GetProp(hwnd,HorizontalResizeProperty).ToInt32();
+                if(edges!=0){
+                    input.Exit();
+                    horizontalChord=true;
+                    return new IntPtr(1);
+                }
+            }
+        }
         if(token!=null&&!Active&&!ForceClose&&!up&&!GestureInputState.Modifier(key)&&key!=0x20){bool cancel=key==0x1B;Queue(()=>FinishPick(cancel));return new IntPtr(1);}
         // Never suppress a painting application's Space, even at keyboard-hook time.
         bool paint=key==0x20&&PaintAtCursor();
@@ -663,11 +687,21 @@ internal static class PapersGestures {
         if(message==0x208&&swallowMiddle){swallowMiddle=false;Queue(FinishDrag);return true;}
         if(message!=0x204&&message!=0x201&&message!=0x207&&message!=0x20A)return false;
         var hit=At(m.P);
-        if(hit!=IntPtr.Zero&&PaintWindow(hit))return false;
+        int dockEdges=message==0x204?GetProp(hit,HorizontalResizeProperty).ToInt32():0;
+        bool dockResize=dockEdges!=0&&HorizontalChordHeld();
+        if(hit!=IntPtr.Zero&&PaintWindow(hit)&&!dockResize)return false;
         uint pid=0;if(hit!=IntPtr.Zero)GetWindowThreadProcessId(hit,out pid);
         if(ForceClose&&message==0x201&&hit!=IntPtr.Zero){swallowLeft=true;Queue(()=>{if(Valid(hit,pid))ForceCloseWindow(hit);});return true;}
         if(token!=null&&!Active&&message==0x201){swallowLeft=true;Queue(()=>TogglePick(hit));return true;}
-        if(!Active&&!dragging)return false;
+        if(dockResize){
+            if(dragging||swallowRight)return false;
+            swallowRight=true;
+            rightDownAt=Now;
+            var point=m.P;
+            Queue(()=>BeginDrag(hit,pid,point,true,false,false,false,dockEdges));
+            return true;
+        }
+        if(horizontalChord||horizontalResize||!Active&&!dragging)return false;
         if(message==0x204){
             swallowRight=true;rightDownAt=Now;
             if(input.Latched&&Down(0x11)){Queue(()=>ToggleTemporary(hit,pid));return true;}
@@ -692,19 +726,29 @@ internal static class PapersGestures {
         var process=Process.GetProcessById((int)pid);var pinnedHandle=process.Handle;long started=process.StartTime.ToUniversalTime().Ticks;
         ThreadPool.QueueUserWorkItem(_=>{Thread.Sleep(500);try{if(Valid(h,pid)&&!process.HasExited&&process.StartTime.ToUniversalTime().Ticks==started)process.Kill();}catch{}finally{process.Dispose();}});
     }
-    static void BeginDrag(IntPtr h,uint pid,Point point,bool sizing,bool group,bool uniform,bool latched){
-        if(!Valid(h,pid)||!Active)return;
+    static void BeginDrag(IntPtr h,uint pid,Point point,bool sizing,bool group,bool uniform,bool latched,int horizontalEdges=0){
+        if(!Valid(h,pid)||(horizontalEdges==0?!Active:!HorizontalChordHeld()||!swallowRight))return;
+        if(horizontalEdges!=0&&(IsZoomed(h)||IsIconic(h)||GetProp(h,HorizontalResizeProperty).ToInt32()!=horizontalEdges))return;
         if(IsZoomed(h)||IsIconic(h)){RestoreThen(h,pid,()=>BeginDrag(h,pid,point,sizing,group,uniform,latched));return;}
-        Note("drag-begin|resize="+sizing+"|pickup="+latched);
+        Note("drag-begin|resize="+sizing+"|pickup="+latched+"|dock-horizontal="+(horizontalEdges!=0));
         if(!GetWindowRect(h,out original))return;
         target=h;targetPid=pid;anchor=point;resize=sizing;middleScale=uniform;pickup=latched;dragging=true;lastX=int.MinValue;lastY=int.MinValue;currentScale=1;
         dragMembers.Clear();var handles=new List<IntPtr>();
-        if(input.Latched&&temporarySelection.Count>0)foreach(var pair in temporarySelection){if(Valid(pair.Key,pair.Value))handles.Add(pair.Key);}
+        if(horizontalEdges==0&&input.Latched&&temporarySelection.Count>0)foreach(var pair in temporarySelection){if(Valid(pair.Key,pair.Value))handles.Add(pair.Key);}
         else if(group&&GroupMembers!=null)handles.AddRange(GroupMembers(h));
         if(handles.Count==0)handles.Add(h);
         foreach(var member in handles){uint memberPid;Rect box;GetWindowThreadProcessId(member,out memberPid);if(Valid(member,memberPid)&&GetWindowRect(member,out box)){if(sizing&&(GetWindowLong(member,-16)&0x40000)==0)continue;dragMembers.Add(new DragMember{H=member,Pid=memberPid,Box=box});}}
         if(dragMembers.Count==0){dragging=false;return;}
         ConfigureResize(point);
+        horizontalResize=horizontalEdges!=0;
+        if(horizontalResize){
+            resizeX=HorizontalEdge(horizontalEdges,point.X<(original.L+original.R)/2);
+            resizeY=0;
+            proportional=false;
+            if(!RequestHorizontalEdge(resizeX<0?original.L:original.R)){
+                dragMembers.Clear();dragging=false;horizontalResize=false;return;
+            }
+        }
         foreach(var member in dragMembers){PostMessage(member.H,0x231,IntPtr.Zero,IntPtr.Zero);NotifyWinEvent(0xA,member.H,0,0);if(member.H==h)Raise(member.H);else RaiseWithoutFocus(member.H);}
     }
     static void ConfigureResize(Point point){
@@ -712,9 +756,16 @@ internal static class PapersGestures {
         resizeX=point.X<(original.L+original.R)/2?-1:1;resizeY=point.Y<(original.T+original.B)/2?-1:1;
         currentScale=1;
     }
+    static bool RequestHorizontalEdge(int position){
+        return SetProp(target,HorizontalRequestProperty,new IntPtr((position<<2)|(resizeX<0?1:2)));
+    }
+    static bool HorizontalChordHeld(){
+        return Down(0x10)&&!Down(0x12)&&(Active||Down(0x11)&&(horizontalChord||Down(0x20)));
+    }
+    static int HorizontalEdge(int edges,bool preferLeft){return (edges&1)!=0&&(preferLeft||(edges&2)==0)?-1:1;}
     static bool Inner(Rect r,Point p){return p.X>=r.L+(r.R-r.L)/4&&p.X<=r.R-(r.R-r.L)/4&&p.Y>=r.T+(r.B-r.T)/4&&p.Y<=r.B-(r.B-r.T)/4;}
     static void Rebase(Point p,bool sizing){foreach(var member in dragMembers){Rect r;if(GetWindowRect(member.H,out r))member.Box=r;}GetWindowRect(target,out original);anchor=p;resize=sizing;ConfigureResize(p);lastX=int.MinValue;lastY=int.MinValue;}
-    static void FinishDrag(){foreach(var member in dragMembers)if(Valid(member.H,member.Pid)){PostMessage(member.H,0x232,IntPtr.Zero,IntPtr.Zero);NotifyWinEvent(0xB,member.H,0,0);}dragMembers.Clear();dragging=false;pickup=false;middleScale=false;target=IntPtr.Zero;if(outline!=null)outline.Hide();}
+    static void FinishDrag(){foreach(var member in dragMembers)if(Valid(member.H,member.Pid)){PostMessage(member.H,0x232,IntPtr.Zero,IntPtr.Zero);NotifyWinEvent(0xB,member.H,0,0);}dragMembers.Clear();dragging=false;horizontalResize=false;pickup=false;middleScale=false;target=IntPtr.Zero;if(outline!=null)outline.Hide();}
     internal static System.Drawing.Rectangle Bounds(int l,int t,int r,int b,int dx,int dy,bool sizing,int edgeX,int edgeY){
         if(!sizing){l+=dx;r+=dx;t+=dy;b+=dy;}else{if(edgeX<0)l=Math.Min(r-140,l+dx);if(edgeX>0)r=Math.Max(l+140,r+dx);if(edgeY<0)t=Math.Min(b-140,t+dy);if(edgeY>0)b=Math.Max(t+140,b+dy);}
         return System.Drawing.Rectangle.FromLTRB(l,t,r,b);
@@ -725,6 +776,9 @@ internal static class PapersGestures {
         Assert(move==new System.Drawing.Rectangle(-860,80,500,400),"negative-monitor move");
         var left=Bounds(100,100,600,500,40,0,true,-1,0);
         Assert(left.Right==600&&left.Left==140,"left resize keeps right edge");
+        Assert(HorizontalEdge(1,false)==-1&&HorizontalEdge(2,true)==1&&HorizontalEdge(3,true)==-1&&HorizontalEdge(3,false)==1,"dock resize picks an available divider");
+        var horizontal=Bounds(100,100,600,500,40,90,true,HorizontalEdge(1,false),0);
+        Assert(horizontal==System.Drawing.Rectangle.FromLTRB(140,100,600,500),"dock resize ignores vertical motion and anchors the opposite edge");
         var minimum=Bounds(100,100,600,500,900,900,true,-1,-1);
         Assert(minimum.Width==140&&minimum.Height==140&&minimum.Right==600&&minimum.Bottom==500,"minimum anchored corner");
         var r=new System.Drawing.Rectangle(-1800,200,800,400);
@@ -820,12 +874,21 @@ internal static class PapersGestures {
         foreach(var pair in new List<KeyValuePair<IntPtr,Outline>>(selectionOutlines))if(!selection.ContainsKey(pair.Key)){pair.Value.Dispose();selectionOutlines.Remove(pair.Key);}
     }
     static void UpdateDrag(Point p){
-        if(!Valid(target,targetPid)||!Active||(!pickup&&!(middleScale?swallowMiddle:swallowRight))){FinishDrag();return;}
+        bool held=horizontalResize
+            ? HorizontalChordHeld()&&swallowRight&&(GetProp(target,HorizontalResizeProperty).ToInt32()&(resizeX<0?1:2))!=0
+            : Active&&(pickup||(middleScale?swallowMiddle:swallowRight));
+        if(!Valid(target,targetPid)||!held){FinishDrag();return;}
         bool sizing=middleScale||Down(0x10);
         if(pickup&&sizing!=resize)Rebase(p,sizing);
         bool moved=p.X!=lastX||p.Y!=lastY;
         if(!moved&&!proportional)return;
         int dx=p.X-anchor.X,dy=p.Y-anchor.Y;
+        if(horizontalResize){
+            if(p.X!=lastX&&RequestHorizontalEdge((resizeX<0?original.L:original.R)+dx))
+                NotifyWinEvent(0x800B,target,0,0);
+            lastX=p.X;lastY=p.Y;
+            return;
+        }
         if(resize&&Math.Abs(dx)<3&&Math.Abs(dy)<3&&lastX==int.MinValue)return;
         if(resize&&proportional){double wanted=Math.Max(.15,1.0-(double)dy/Math.Max(1,original.B-original.T)*3);currentScale+= (wanted-currentScale)*.12;}
         foreach(var member in dragMembers){
@@ -847,6 +910,15 @@ internal static class PapersGestures {
         if(ticks%4==0)PollPick();
         Point p;if(!GetCursorPos(out p))return;
         if(dragging)UpdateDrag(p);
+        if(horizontalResize||horizontalChord&&HorizontalChordHeld()){
+            var dock=horizontalResize?target:At(p);
+            if(GetProp(dock,HorizontalResizeProperty)==IntPtr.Zero)HideFeedback();
+            else{
+                Draw(dock,1,p);
+                FeedbackCursor("size-horizontal",32644);
+            }
+            return;
+        }
         if(!Active&&!ForceClose&&token==null&&!dragging){temporarySelection.Clear();HideFeedback();return;}
         var h=dragging?target:At(p);
         if(h!=IntPtr.Zero&&PaintWindow(h)){HideFeedback();return;}

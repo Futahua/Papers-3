@@ -78,6 +78,8 @@ public sealed class PaneScope {
     public Rectangle Viewport;
     public double Ratio = 0.5;
     public bool Presented = true;
+    public bool CompactViewport;
+    public string CompactGroup,ActiveGroup;
     public PaneSplit Root;
     public PaneScope(string id,int headerHeight=0) { ScopeId = id; HeaderHeight=Math.Max(0,headerHeight); }
     public PaneGroup Add(string id) {

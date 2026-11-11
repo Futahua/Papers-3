@@ -106,11 +106,17 @@ public sealed partial class PaneCoordinator : IDisposable {
     public PanePeer Find(string id) {PanePeer p;if(!tabIndex.TryGetValue(id,out p))throw new Exception("Unknown tab.");return p;}
     public PaneGroup Group(string id){PaneGroup g;if(!Scope.Groups.TryGetValue(id,out g))throw new Exception("Unknown group.");return g;}
     PanePeer Selected(PaneGroup g){PanePeer p;return g.SelectedTab!=null&&tabIndex.TryGetValue(g.SelectedTab,out p)?p:null;}
+    public bool FitsCompact(string id){
+        if(Scope.CompactGroup==null)return true;
+        if(Scope.CompactGroup!=id)return false;
+        var g=Group(id);if(Selected(g)==null)return true;
+        var min=MinimumSize(g);return Scope.Viewport.Width>=min.Width&&Scope.Viewport.Height-Scope.HeaderHeight>=min.Height;
+    }
     internal IEnumerable<PanePeer> Visible(){
         if(!Scope.Presented||hostSuspended)return Enumerable.Empty<PanePeer>();
         var maximized=Scope.Order.FirstOrDefault(id=>Group(id).Presentation=="maximized");
-        return Scope.Order.Where(id=>maximized==null||id==maximized).Select(id=>Group(id))
-            .Where(g=>g.Presentation!="minimized").Select(Selected).Where(p=>p!=null&&p.Session.Valid()&&!Native.IsHungAppWindow(p.Session.Handle));
+        return Scope.Order.Where(id=>Scope.CompactGroup!=null?id==Scope.CompactGroup:maximized==null||id==maximized).Select(id=>Group(id))
+            .Where(g=>(Scope.CompactGroup!=null?FitsCompact(g.Id):g.Presentation!="minimized")).Select(Selected).Where(p=>p!=null&&p.Session.Valid()&&!Native.IsHungAppWindow(p.Session.Handle));
     }
     void Notify(string cause){Log(cause,null,null,null,"snapshot");if(publish!=null)try{publish(Snapshot());}catch(Exception error){Log("snapshot-publish-error",null,null,null,error.Message);}}
     void Log(string cause,PanePeer p,Rectangle? request,Rectangle? actual,string action){
@@ -154,6 +160,8 @@ public sealed partial class PaneCoordinator : IDisposable {
                 bool held=false;
                 try{try{held=lease.WaitOne(0);}catch(AbandonedMutexException){held=true;}
                     if(!held)throw new Exception("Native window belongs to another live pane; recovery deferred.");
+                    RemoveProp(new IntPtr(peer.Window.Handle),HorizontalResizeProperty);
+                    RemoveProp(new IntPtr(peer.Window.Handle),HorizontalRequestProperty);
                     RestoreSavedWindow(peer.Window,true);
                 }catch(Exception error){failures.Add(error.Message);}
                 finally{if(held)try{lease.ReleaseMutex();}catch{}}
@@ -242,13 +250,15 @@ public sealed partial class PaneCoordinator : IDisposable {
         var actual=tabIndex.Values.Where(p=>p.Session.Valid()).Select(p=>new WindowSession(p.Session.Handle.ToInt64(),p.Session.Saved.Pid).Saved).ToArray();
         long state=Scope.StateRevision,geometry=Scope.GeometryRevision;double ratio=Scope.Ratio;bool shown=Scope.Presented;
         bool priorPanelMigration=protectedPanelsMigrated;
+        bool compactViewport=Scope.CompactViewport;string compactGroup=Scope.CompactGroup,activeGroup=Scope.ActiveGroup;
+        Scope.CompactViewport=compactViewport&&cause!="splitAndMove"&&cause!="createGroup"&&cause!="relocateGroup"&&cause!="document-edge-resize";
         var viewport=Scope.Viewport;var leftOffset=authoredLeftOffset;long nativeEdge=Scope.NativeEdgeRevision;
         try{
             action();
             if(!PaneLayout.Resolve(Scope,MinimumSize)&&(!expandForSelection||!WidenForSelection()))throw new Exception("Native minimum sizes reject split.");
             RefreshGroupVisibility();Reflow(null,cause);Paint();
         }catch{
-            Scope.Root=root;Scope.Ratio=ratio;Scope.Presented=shown;Scope.Viewport=viewport;authoredLeftOffset=leftOffset;Scope.NativeEdgeRevision=nativeEdge;
+            Scope.CompactGroup=compactGroup;Scope.ActiveGroup=activeGroup;Scope.Root=root;Scope.Ratio=ratio;Scope.Presented=shown;Scope.Viewport=viewport;authoredLeftOffset=leftOffset;Scope.NativeEdgeRevision=nativeEdge;
             protectedPanelsMigrated=priorPanelMigration;
             Scope.Order.Clear();Scope.Order.AddRange(order);Scope.Groups.Clear();
             foreach(var pair in groups){Scope.Groups.Add(pair.Key,pair.Value);var g=pair.Value;
@@ -264,7 +274,7 @@ public sealed partial class PaneCoordinator : IDisposable {
             // bounds, so only undo native state that actually changed.
             foreach(var saved in actual)try{if(!SavedWindowUnchanged(saved))RestoreSavedWindow(saved);}catch(Exception e){Log("command-rollback",null,null,null,e.Message);}
             try{Paint();}catch{}throw;
-        }
+        }finally{Scope.CompactViewport=compactViewport;}
         Scope.StateRevision=state+1;Scope.GeometryRevision=geometry+1;
         Stack(false,null);Notify(cause);
     }
@@ -277,19 +287,21 @@ public sealed partial class PaneCoordinator : IDisposable {
         if(Scope.Groups.Values.Any(g=>g.Gesture!=null)){
             Scope.PendingViewport=box;Scope.PendingViewportRevision=revision;return;
         }
-        if(box.Width<PaneLayout.DefaultMinWidth||box.Height<PaneLayout.DefaultMinHeight)
+        if(box.Width<1||box.Height<1)
             throw new Exception("Viewport too small for groups.");
+        Scope.CompactViewport=true;var previousCompact=Scope.CompactGroup;
         var previous=Scope.Viewport;long oldViewportRevision=Scope.ViewportRevision;
         var oldRoot=Scope.Root==null?null:Scope.Root.Copy();
         if(previous==box){Scope.ViewportRevision=revision;return;}
         var oldFrames=Scope.Order.ToDictionary(id=>id,id=>Group(id).ResolvedFrame);
         Scope.Viewport=box;
-        if(!PaneLayout.Resolve(Scope,MinimumSize)){Scope.Viewport=previous;Scope.ViewportRevision=oldViewportRevision;Scope.Root=oldRoot;
+        if(!PaneLayout.Resolve(Scope,MinimumSize)){Scope.CompactGroup=previousCompact;Scope.Viewport=previous;Scope.ViewportRevision=oldViewportRevision;Scope.Root=oldRoot;
             foreach(var pair in oldFrames)Group(pair.Key).ResolvedFrame=pair.Value;throw new Exception("Native minimum sizes reject viewport.");}
-        try{Reflow(null,"viewport");}catch{
+        try{RefreshGroupVisibility();Reflow(null,"viewport");}catch{
+            Scope.CompactGroup=previousCompact;
             Scope.Viewport=previous;Scope.ViewportRevision=oldViewportRevision;Scope.Root=oldRoot;
             foreach(var pair in oldFrames)Group(pair.Key).ResolvedFrame=pair.Value;
-            try{Reflow(null,"viewport-rollback");}catch{}throw;
+            try{RefreshGroupVisibility();Reflow(null,"viewport-rollback");}catch{}throw;
         }
         Scope.ViewportRevision=revision;Scope.GeometryRevision++;Notify("setViewport");
     }
@@ -307,7 +319,7 @@ public sealed partial class PaneCoordinator : IDisposable {
     }
     void RefreshGroupVisibility(){
         var max=Scope.Order.FirstOrDefault(id=>Group(id).Presentation=="maximized");
-        foreach(var id in Scope.Order){var g=Group(id);ShowPeer(Selected(g),Scope.Presented&&!hostSuspended&&g.Presentation!="minimized"&&(max==null||max==id));}
+        foreach(var id in Scope.Order){var g=Group(id);ShowPeer(Selected(g),Scope.Presented&&!hostSuspended&&(Scope.CompactGroup!=null?FitsCompact(id):g.Presentation!="minimized"&&(max==null||max==id)));}
     }
     public void SetPresented(bool value){
         if(stopped||Scope.Presented==value)return;
@@ -361,8 +373,8 @@ public sealed partial class PaneCoordinator : IDisposable {
     public void SelectTab(string groupId,string tabId,long binding,long state) {
         Check(binding,state);PaneGroup g=Group(groupId);PanePeer p;tabIndex.TryGetValue(tabId,out p);
         if(TabGroup(tabId)!=groupId)throw new Exception("Tab belongs to another group.");
-        if(g.SelectedTab==tabId)return;
-        Change("selectTab",()=>{var old=Selected(g);g.SelectedTab=tabId;
+        if(g.SelectedTab==tabId&&(Scope.CompactGroup==null||Scope.CompactGroup==groupId))return;
+        Change("selectTab",()=>{Scope.ActiveGroup=groupId;var old=Selected(g);g.SelectedTab=tabId;
             if(p!=null){var minimum=NativeMinimum(p.Session.Handle);p.MinTrackWidth=minimum.Width;p.MinTrackHeight=minimum.Height;}
             if(old!=null)ShowPeer(old,false);},true);
         if(p!=null&&Visible().Contains(p))Stack(true,p);
@@ -524,19 +536,41 @@ public sealed partial class PaneCoordinator : IDisposable {
         if(p.Programmatic.Count>12)p.Programmatic.RemoveAt(0);
         Log(cause,p,target,after.Box,"SetWindowPos:NOACTIVATE|NOZORDER");
     }
-    void Reflow(PanePeer dragged,string cause) {
+    void Reflow(PanePeer dragged,string cause,bool placeDragged=false) {
         placementSettleUntil=DateTime.UtcNow.AddSeconds(15);
         foreach(var id in Scope.Order){
             PaneGroup g=Group(id);PanePeer p=Selected(g);
-            if(p==null||p==dragged||!Scope.Presented||hostSuspended||g.Presentation=="minimized")continue;
+            if(p==null||(p==dragged&&!placeDragged)||!Scope.Presented||hostSuspended||(Scope.CompactGroup!=null?!FitsCompact(id):g.Presentation=="minimized"))continue;
             if(g.Gesture!=null&&dragged==null)continue;
             Place(p,g.Presentation=="maximized"?PaneLayout.Content(Scope,Scope.Viewport):g.ResolvedFrame,cause);
         }
         Paint();
     }
+    const string HorizontalResizeProperty="Papers.DockedHorizontalResize";
+    const string HorizontalRequestProperty="Papers.DockedHorizontalRequest";
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    static extern IntPtr RemoveProp(IntPtr hwnd,string name);
+
+    void UpdateHorizontalResizeTarget(PanePeer peer,bool visible) {
+        var hwnd=peer.Session.Handle;
+        if(!peer.Session.Valid())return;
+        int edges=0;
+        var group=Group(peer.GroupId);
+        if(visible&&group.Presentation=="normal"&&Scope.CompactGroup==null&&!peer.Session.Fullscreen){
+            if(PaneLayout.Boundary(Scope,group.Id,"left")!=null)edges|=1;
+            if(PaneLayout.Boundary(Scope,group.Id,"right")!=null)edges|=2;
+            if(edges==0&&group.ResolvedFrame.Left==Scope.Viewport.Left)edges=1;
+        }
+        if(Native.GetProp(hwnd,HorizontalResizeProperty).ToInt64()==edges)return;
+        if(edges==0)RemoveProp(hwnd,HorizontalResizeProperty);
+        else Native.SetProp(hwnd,HorizontalResizeProperty,new IntPtr(edges));
+    }
+
     void Paint() {
+        var visible=Visible().ToArray();
+        foreach(var peer in hwndIndex.Values)UpdateHorizontalResizeTarget(peer,visible.Contains(peer)&&!Fullscreen(peer));
         var frames=new List<Rectangle>();
-        foreach(var p in Visible()){
+        foreach(var p in visible){
             p.Session.Fullscreen=Fullscreen(p);
             if(p.Session.Fullscreen)continue;
             p.ObservedVisible=p.Session.Frame();frames.Add(p.ObservedVisible);
@@ -583,12 +617,16 @@ public sealed partial class PaneCoordinator : IDisposable {
             if(g.SelectedTab!=p.TabId||!Native.GetWindowRect(hwnd,out actual))return;
             g.Gesture=new PaneGesture{InitialOuter=actual.Box,StartingBoundary=Scope.Order.Count==2?Group(Scope.Order[0]).ResolvedFrame.Right:0,
                 Generation=++gestureGeneration,OuterLeft=actual.L==Scope.Viewport.Left};
+            int request=Native.GetProp(hwnd,HorizontalRequestProperty).ToInt32();
+            if(request!=0)g.Gesture.Edge=(request&3)==1?"left":"right";
             Log("native-start",p,null,actual.Box,"gesture");
             return;
         }
         if(ev==End){
             var gesture=g.Gesture;
             if(gesture!=null){
+                ApplyHorizontalRequest(p,g,gesture);
+                RemoveProp(hwnd,HorizontalRequestProperty);
                 g.Gesture=null;
                 if(gesture.Changed&&Scope.Root!=null)Scope.Ratio=Scope.Root.Ratio;
                 if(Scope.PendingViewport.HasValue){var pending=Scope.PendingViewport.Value;var revision=Scope.PendingViewportRevision;
@@ -632,6 +670,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         }
         var gestureNow=g.Gesture;
         if(gestureNow==null||g.SelectedTab!=p.TabId||p.Session.Fullscreen||Fullscreen(p)){Paint();return;}
+        if(ApplyHorizontalRequest(p,g,gestureNow))return;
         var initial=gestureNow.InitialOuter;
         // Lock the first qualifying edge for this gesture. Translation/corner moves cannot author a seam.
         if(gestureNow.Edge==null){
@@ -647,6 +686,21 @@ public sealed partial class PaneCoordinator : IDisposable {
             actual.T==initial.Top&&actual.L==initial.Left&&actual.R==initial.Right;
         if(!anchored)return;
         int position=edge=="left"?actual.L:edge=="right"?actual.R:edge=="top"?actual.T:actual.B;
+        CommitResize(p,gestureNow,edge,position,actual.Box,false);
+    }
+
+    bool ApplyHorizontalRequest(PanePeer peer,PaneGroup group,PaneGesture gesture){
+        int request=Native.GetProp(peer.Session.Handle,HorizontalRequestProperty).ToInt32();
+        if(request==0)return false;
+        string edge=(request&3)==1?"left":"right";
+        if(group.SelectedTab!=peer.TabId||gesture.Edge!=edge||peer.Session.Fullscreen)return true;
+        int position=request>>2;
+        int current=edge=="left"?group.ResolvedFrame.Left:group.ResolvedFrame.Right;
+        if(position!=current)CommitResize(peer,gesture,edge,position,group.ResolvedFrame,true);
+        return true;
+    }
+
+    void CommitResize(PanePeer p,PaneGesture gestureNow,string edge,int position,Rectangle observed,bool requested){
         var before=Scope.Order.ToDictionary(id=>id,id=>Group(id).ResolvedFrame);
         var root=Scope.Root.Copy();var viewport=Scope.Viewport;double ratio=Scope.Ratio;long edgeRevision=Scope.GeometryRevision;
         bool accepted=PaneLayout.AcceptEdge(Scope,p.GroupId,edge,position,MinimumSize);
@@ -658,14 +712,14 @@ public sealed partial class PaneCoordinator : IDisposable {
             if(accepted)Scope.GeometryRevision++;else {Scope.Viewport=viewport;Scope.Root=root;}
         }
         if(accepted){
-            try{Reflow(p,"native-resize-neighbor");gestureNow.Changed=true;
+            try{Reflow(p,"native-resize-neighbor",requested);gestureNow.Changed=true;
                 if(edge=="left"&&gestureNow.OuterLeft){Native.Rect owner;if(Native.GetWindowRect(host,out owner))authoredLeftOffset=position-owner.L;Scope.NativeEdgeRevision++;}
                 Notify("native-resize");}
             catch(Exception error){
                 Scope.Root=root;Scope.Viewport=viewport;Scope.Ratio=ratio;Scope.GeometryRevision=edgeRevision;
                 foreach(var pair in before)Group(pair.Key).ResolvedFrame=pair.Value;
-                try{Reflow(p,"resize-reject-rollback");}catch{}
-                Log("native-resize-rejected",p,null,actual.Box,error.Message);
+                try{Reflow(p,"resize-reject-rollback",requested);}catch{}
+                Log("native-resize-rejected",p,null,observed,error.Message);
             }
         }
     }
@@ -707,7 +761,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         if(stopped||!Scope.Presented||hostSuspended||DateTime.UtcNow>placementSettleUntil||Scope.Groups.Values.Any(g=>g.Gesture!=null))return;
         var maximum=Scope.Order.FirstOrDefault(id=>Group(id).Presentation=="maximized");bool repaint=false;
         foreach(var id in Scope.Order){
-            var group=Group(id);if(group.Presentation=="minimized"||(maximum!=null&&maximum!=id))continue;
+            var group=Group(id);if(Scope.CompactGroup!=null?!FitsCompact(id):group.Presentation=="minimized"||(maximum!=null&&maximum!=id))continue;
             var peer=Selected(group);if(peer==null||!peer.Session.Valid()||Native.IsHungAppWindow(peer.Session.Handle)||Native.IsIconic(peer.Session.Handle))continue;
             var target=group.Presentation=="maximized"?PaneLayout.Content(Scope,Scope.Viewport):group.ResolvedFrame;
             Native.Rect before;if(!Native.GetWindowRect(peer.Session.Handle,out before)||before.Box==target)continue;
@@ -784,7 +838,12 @@ public sealed partial class PaneCoordinator : IDisposable {
           (Native.GetWindowLong(hwnd,-20)&8)!=(saved.ExStyle&8))
             throw new Exception("Native window restoration mismatch for HWND "+saved.Handle+": "+new JavaScriptSerializer().Serialize(new{expected=saved.Placement,actual=result,visible=Native.IsWindowVisible(hwnd),expectedVisible=saved.Visible}));
     }
-    static void RestorePeer(PanePeer peer){if(peer.Session.Valid())RestoreSavedWindow(peer.Session.Saved);}
+    static void RestorePeer(PanePeer peer){
+        if(!peer.Session.Valid())return;
+        RemoveProp(peer.Session.Handle,HorizontalResizeProperty);
+        RemoveProp(peer.Session.Handle,HorizontalRequestProperty);
+        RestoreSavedWindow(peer.Session.Saved);
+    }
     public void Release(){
         if(stopped)return;stopped=true;liveness.Stop();liveness.Dispose();
         var failures=new List<Exception>();

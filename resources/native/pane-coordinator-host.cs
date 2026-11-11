@@ -130,7 +130,7 @@ public sealed class PaneCoordinatorHost:Form {
         icon=null;try{using(var process=Process.GetProcessById((int)pid))using(var image=Icon.ExtractAssociatedIcon(process.MainModule.FileName))using(var bitmap=image.ToBitmap())using(var stream=new MemoryStream()){bitmap.Save(stream,System.Drawing.Imaging.ImageFormat.Png);icon="data:image/png;base64,"+Convert.ToBase64String(stream.ToArray());}}catch{}icons[pid]=icon;return icon;}
     object Snapshot(Binding binding){var pane=binding.Pane;var scope=pane.Scope;
         return new{binding=binding.Token,bindingGeneration=scope.BindingGeneration,stateRevision=scope.StateRevision,geometryRevision=scope.GeometryRevision,nativeEdgeRevision=scope.NativeEdgeRevision,
-            viewport=Local(scope.Viewport),tree=Tree(scope.Root),presented=scope.Presented,
+            viewport=Local(scope.Viewport),tree=Tree(scope.Root),presented=scope.Presented,compactGroup=scope.CompactGroup,compactFits=scope.CompactGroup==null||pane.FitsCompact(scope.CompactGroup),
             groups=scope.Order.Select(id=>{var g=pane.Group(id);bool max=g.Presentation=="maximized";return new{id,selected=g.SelectedTab,presentation=g.Presentation,
                 slot=Local(max?scope.Viewport:PaneLayout.Slot(scope,g)),content=Local(max?PaneLayout.Content(scope,scope.Viewport):g.ResolvedFrame),
                 tabs=g.OrderedTabs.Select(tab=>{var dormant=pane.Dormant(tab);if(dormant!=null)return (object)new{id=tab,kind="dormant",active=g.SelectedTab==tab,title=dormant.Title??"Unavailable application",icon=dormant.Icon,canOpen=!string.IsNullOrEmpty(dormant.Url)};
