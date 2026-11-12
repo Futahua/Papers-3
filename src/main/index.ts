@@ -2307,6 +2307,9 @@ async function bootstrap(): Promise<void> {
   let proximaTimerWindow: BrowserWindow | null = null;
   let proximaFollow: NodeJS.Timeout | null = null;
   let proximaFit: NodeJS.Timeout | null = null;
+  // The size is the user's once they resize it; until then it fits the card shown.
+  let proximaUserSized = false;
+  let proximaFittedKind = '';
   const stopProximaFollow = () => {
     if (proximaFollow) clearInterval(proximaFollow);
     proximaFollow = null;
@@ -2335,14 +2338,18 @@ async function bootstrap(): Promise<void> {
     stopProximaFollow();
     if (!window.isDestroyed()) window.hide();
   };
-  // The card's height changes (idle timer, running task); the window follows it.
+  // Fits the window to the card shown when it opens and when it switches between the idle
+  // timer and a running task; never after the user has resized it.
   const fitProximaTimer = async (window: BrowserWindow) => {
-    if (window.isDestroyed() || !window.isVisible()) return;
+    if (window.isDestroyed() || !window.isVisible() || proximaUserSized) return;
     try {
-      const height = await window.webContents.executeJavaScript(
-        "(()=>{const c=document.querySelector('.papers-task-widget-timeline > .exact-task-card:not([hidden]), .papers-task-widget-timeline > .exact-timer-card:not([hidden])');return c?Math.ceil(c.getBoundingClientRect().height)+16:0;})()",
+      const shown = await window.webContents.executeJavaScript(
+        "(()=>{const c=document.querySelector('.papers-task-widget-timeline > .exact-task-card:not([hidden]), .papers-task-widget-timeline > .exact-timer-card:not([hidden])');return c?{kind:c.className,height:Math.ceil(c.getBoundingClientRect().height)+16}:null;})()",
       );
+      const height = shown?.height;
       if (typeof height !== 'number' || height < 60 || window.isDestroyed()) return;
+      if (shown.kind === proximaFittedKind) return;
+      proximaFittedKind = shown.kind;
       const [width = 376, current = 0] = window.getContentSize();
       const next = Math.min(720, height);
       if (Math.abs(next - current) > 2) window.setContentSize(width, next);
@@ -2397,6 +2404,9 @@ async function bootstrap(): Promise<void> {
       if (destination?.protocol !== url.protocol || destination.host !== url.host) event.preventDefault();
     });
     proximaTimerWindow = window;
+    proximaUserSized = false;
+    proximaFittedKind = '';
+    window.on('will-resize', () => { proximaUserSized = true; });
     window.once('closed', () => {
       if (proximaTimerWindow === window) proximaTimerWindow = null;
       stopProximaFollow();
