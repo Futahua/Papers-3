@@ -2306,11 +2306,43 @@ async function bootstrap(): Promise<void> {
   // a press while hovering it (or Escape) hides it. Its height fits its card.
   let proximaTimerWindow: BrowserWindow | null = null;
   let proximaFollow: NodeJS.Timeout | null = null;
+  let proximaFollowDelay: NodeJS.Timeout | null = null;
+  let proximaShortcutHeld = false;
+  let proximaTapToHide: BrowserWindow | null = null;
+  const proximaPlacementFile = path.join(app.getPath('userData'), 'proxima-widget-placement.json');
+  let proximaPlacement: { side: 'left' | 'right'; y: number; displayId: number } | null = null;
+  try {
+    const saved = JSON.parse(readFileSync(proximaPlacementFile, 'utf8'));
+    if (['left', 'right'].includes(saved?.side) && Number.isFinite(saved.y) && Number.isFinite(saved.displayId)) {
+      proximaPlacement = saved;
+    }
+  } catch {}
+  const saveProximaPlacement = (window: BrowserWindow) => {
+    if (window.isDestroyed() || !window.isVisible()) return;
+    const bounds = window.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const side = bounds.x + bounds.width / 2 < area.x + area.width / 2 ? 'left' : 'right';
+    proximaPlacement = { side, y: bounds.y - area.y, displayId: display.id };
+    try { writeFileSync(proximaPlacementFile, JSON.stringify(proximaPlacement)); }
+    catch (error) { console.warn('[papers] Could not save Proxima widget placement', error); }
+  };
+  const restoredProximaPosition = (width: number, height: number) => {
+    if (!proximaPlacement) return null;
+    const display = screen.getAllDisplays().find(candidate => candidate.id === proximaPlacement?.displayId)
+      ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const area = display.workArea;
+    return {
+      x: proximaPlacement.side === 'left' ? area.x + 12 : area.x + Math.max(0, area.width - width - 12),
+      y: area.y + Math.max(0, Math.min(proximaPlacement.y, area.height - height)),
+    };
+  };
   let proximaFit: NodeJS.Timeout | null = null;
-  // The size is the user's once they resize it; until then it fits the card shown.
-  let proximaUserSized = false;
+  const proximaSizes = new Map<string, [number, number]>();
   let proximaFittedKind = '';
   const stopProximaFollow = () => {
+    if (proximaFollowDelay) clearTimeout(proximaFollowDelay);
+    proximaFollowDelay = null;
     if (proximaFollow) clearInterval(proximaFollow);
     proximaFollow = null;
   };
@@ -2323,11 +2355,16 @@ async function bootstrap(): Promise<void> {
   };
   const followProximaCursor = (window: BrowserWindow) => {
     stopProximaFollow();
-    placeProximaAtCursor(window);
-    proximaFollow = setInterval(() => {
-      if (window.isDestroyed() || !window.isVisible()) return stopProximaFollow();
+    if (!proximaShortcutHeld) return;
+    proximaFollowDelay = setTimeout(() => {
+      proximaFollowDelay = null;
+      if (!proximaShortcutHeld || window.isDestroyed() || !window.isVisible()) return;
       placeProximaAtCursor(window);
-    }, 16);
+      proximaFollow = setInterval(() => {
+        if (window.isDestroyed() || !window.isVisible()) return stopProximaFollow();
+        placeProximaAtCursor(window);
+      }, 16);
+    }, 180);
   };
   const cursorOverProxima = (window: BrowserWindow) => {
     const point = screen.getCursorScreenPoint();
@@ -2336,34 +2373,42 @@ async function bootstrap(): Promise<void> {
   };
   const hideProximaTimer = (window: BrowserWindow) => {
     stopProximaFollow();
-    if (!window.isDestroyed()) window.hide();
+    if (!window.isDestroyed()) {
+      saveProximaPlacement(window);
+      window.hide();
+    }
   };
   // Fits the window to the card shown when it opens and when it switches between the idle
   // timer and a running task; never after the user has resized it.
   const fitProximaTimer = async (window: BrowserWindow) => {
-    if (window.isDestroyed() || !window.isVisible() || proximaUserSized) return;
+    if (window.isDestroyed() || !window.isVisible()) return;
     try {
       const shown = await window.webContents.executeJavaScript(
-        "(()=>{const c=document.querySelector('.papers-task-widget-timeline > .exact-task-card:not([hidden]), .papers-task-widget-timeline > .exact-timer-card:not([hidden])');return c?{kind:c.className,height:Math.ceil(c.getBoundingClientRect().height)+16}:null;})()",
+        "(()=>{const c=document.querySelector('.papers-task-widget-timeline > .exact-task-card:not([hidden]), .papers-task-widget-timeline > .exact-timer-card:not([hidden])');return c?{kind:c.className,height:Math.ceil(c.scrollHeight+c.offsetHeight-c.clientHeight)+16}:null;})()",
       );
       const height = shown?.height;
       if (typeof height !== 'number' || height < 60 || window.isDestroyed()) return;
-      if (shown.kind === proximaFittedKind) return;
+      const manual = proximaSizes.has(shown.kind);
+      if (shown.kind === proximaFittedKind && (manual || shown.kind.startsWith('exact-task-card'))) return;
+      await window.webContents.executeJavaScript("document.documentElement.toggleAttribute('data-proxima-manual-size', " + manual + ")");
+      if (window.isDestroyed()) return;
       proximaFittedKind = shown.kind;
-      const [width = 376, current = 0] = window.getContentSize();
-      const next = Math.min(720, height);
-      if (Math.abs(next - current) > 2) window.setContentSize(width, next);
+      const [width = 376, current = 140] = window.getContentSize();
+      const area = screen.getDisplayMatching(window.getBounds()).workArea;
+      const [nextWidth, nextHeight] = proximaSizes.get(shown.kind) ?? [376, Math.min(720, height)];
+      if (Math.abs(nextWidth - width) > 2 || Math.abs(nextHeight - current) > 2) {
+        window.setContentSize(Math.min(nextWidth, area.width), Math.min(nextHeight, area.height));
+      }
     } catch {}
   };
   const beginProximaTimer = async () => {
     const existing = proximaTimerWindow;
     if (existing && !existing.isDestroyed()) {
-      if (existing.isVisible() && cursorOverProxima(existing)) {
-        hideProximaTimer(existing);
-        return;
-      }
-      placeProximaAtCursor(existing);
-      if (!existing.isVisible()) existing.showInactive();
+      // Decide whether to hide on release, after a hold has had a chance to move it.
+      proximaTapToHide = existing.isVisible() && cursorOverProxima(existing) ? existing : null;
+      if (!proximaTapToHide) placeProximaAtCursor(existing);
+      if (!existing.isVisible()) existing.show();
+      else existing.focus();
       existing.moveTop();
       followProximaCursor(existing);
       void fitProximaTimer(existing);
@@ -2382,8 +2427,7 @@ async function bootstrap(): Promise<void> {
     url.searchParams.set('papers-task-widget', '1');
     const point = screen.getCursorScreenPoint();
     const window = new BrowserWindow({
-      x: Math.round(point.x - 188),
-      y: Math.round(point.y - 24),
+      ...(restoredProximaPosition(376, 140) ?? { x: Math.round(point.x - 188), y: Math.round(point.y - 24) }),
       width: 376,
       height: 140,
       frame: false,
@@ -2404,9 +2448,19 @@ async function bootstrap(): Promise<void> {
       if (destination?.protocol !== url.protocol || destination.host !== url.host) event.preventDefault();
     });
     proximaTimerWindow = window;
-    proximaUserSized = false;
     proximaFittedKind = '';
-    window.on('will-resize', () => { proximaUserSized = true; });
+    let moving = false;
+    window.on('will-move', () => { moving = true; });
+    window.on('moved', () => { if (moving) { moving = false; saveProximaPlacement(window); } });
+    let resizingKind = '';
+    window.on('will-resize', () => { resizingKind = proximaFittedKind; });
+    window.on('resized', () => {
+      if (!resizingKind) return;
+      const [width = 376, height = 140] = window.getContentSize();
+      proximaSizes.set(resizingKind, [width, height]);
+      void window.webContents.executeJavaScript("document.documentElement.setAttribute('data-proxima-manual-size', '')").catch(() => {});
+      resizingKind = '';
+    });
     window.once('closed', () => {
       if (proximaTimerWindow === window) proximaTimerWindow = null;
       stopProximaFollow();
@@ -2422,8 +2476,8 @@ async function bootstrap(): Promise<void> {
     try {
       await window.loadURL(url.toString());
       if (window.isDestroyed()) return;
-      await fitProximaTimer(window.isVisible() ? window : (window.showInactive(), window));
-      placeProximaAtCursor(window);
+      window.show();
+      await fitProximaTimer(window);
       window.moveTop();
       followProximaCursor(window);
       if (proximaFit) clearInterval(proximaFit);
@@ -2445,8 +2499,19 @@ async function bootstrap(): Promise<void> {
       }
     },
     onAltQRelease: () => widgetSession?.endAltQGesture(),
-    onAltW: () => { void beginProximaTimer(); },
-    onAltWRelease: () => stopProximaFollow(),
+    onAltW: () => {
+      if (proximaShortcutHeld) return;
+      proximaShortcutHeld = true;
+      void beginProximaTimer();
+    },
+    onAltWRelease: () => {
+      proximaShortcutHeld = false;
+      const tap = proximaTapToHide;
+      proximaTapToHide = null;
+      if (proximaFollow && proximaTimerWindow) saveProximaPlacement(proximaTimerWindow);
+      else if (tap) hideProximaTimer(tap);
+      stopProximaFollow();
+    },
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);
