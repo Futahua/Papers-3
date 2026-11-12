@@ -2301,6 +2301,128 @@ async function bootstrap(): Promise<void> {
       return { ok: false, detail: error instanceof Error ? error.message : String(error) };
     }
   };
+  // Alt+W: Proxima's task widget, handled like the As you Go widget. A press away from it
+  // brings it to the pointer and it follows while Alt+W is held, so it lands anywhere;
+  // a press while hovering it (or Escape) hides it. Its height fits its card.
+  let proximaTimerWindow: BrowserWindow | null = null;
+  let proximaFollow: NodeJS.Timeout | null = null;
+  let proximaFit: NodeJS.Timeout | null = null;
+  const stopProximaFollow = () => {
+    if (proximaFollow) clearInterval(proximaFollow);
+    proximaFollow = null;
+  };
+  const placeProximaAtCursor = (window: BrowserWindow) => {
+    if (window.isDestroyed()) return;
+    const point = screen.getCursorScreenPoint();
+    const bounds = window.getBounds();
+    const next = { ...bounds, x: Math.round(point.x - bounds.width / 2), y: Math.round(point.y - 24) };
+    if (next.x !== bounds.x || next.y !== bounds.y) window.setBounds(next);
+  };
+  const followProximaCursor = (window: BrowserWindow) => {
+    stopProximaFollow();
+    placeProximaAtCursor(window);
+    proximaFollow = setInterval(() => {
+      if (window.isDestroyed() || !window.isVisible()) return stopProximaFollow();
+      placeProximaAtCursor(window);
+    }, 16);
+  };
+  const cursorOverProxima = (window: BrowserWindow) => {
+    const point = screen.getCursorScreenPoint();
+    const b = window.getBounds();
+    return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
+  };
+  const hideProximaTimer = (window: BrowserWindow) => {
+    stopProximaFollow();
+    if (!window.isDestroyed()) window.hide();
+  };
+  // The card's height changes (idle timer, running task); the window follows it.
+  const fitProximaTimer = async (window: BrowserWindow) => {
+    if (window.isDestroyed() || !window.isVisible()) return;
+    try {
+      const height = await window.webContents.executeJavaScript(
+        "(()=>{const c=document.querySelector('.papers-task-widget-timeline > .exact-task-card:not([hidden]), .papers-task-widget-timeline > .exact-timer-card:not([hidden])');return c?Math.ceil(c.getBoundingClientRect().height)+16:0;})()",
+      );
+      if (typeof height !== 'number' || height < 60 || window.isDestroyed()) return;
+      const [width = 376, current = 0] = window.getContentSize();
+      const next = Math.min(720, height);
+      if (Math.abs(next - current) > 2) window.setContentSize(width, next);
+    } catch {}
+  };
+  const beginProximaTimer = async () => {
+    const existing = proximaTimerWindow;
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isVisible() && cursorOverProxima(existing)) {
+        hideProximaTimer(existing);
+        return;
+      }
+      placeProximaAtCursor(existing);
+      if (!existing.isVisible()) existing.showInactive();
+      existing.moveTop();
+      followProximaCursor(existing);
+      void fitProximaTimer(existing);
+      return;
+    }
+    const project = registry.list().find(item => !item.archived && /^Proxima(?:\s|$)/i.test(item.name));
+    if (!project) return;
+    const owner = papersWindows.windowIds
+      .map(windowId => ({
+        windowId,
+        entry: papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(project.id),
+      }))
+      .find(candidate => candidate.entry);
+    if (!owner?.entry) return;
+    const url = new URL(owner.entry);
+    url.searchParams.set('papers-task-widget', '1');
+    const point = screen.getCursorScreenPoint();
+    const window = new BrowserWindow({
+      x: Math.round(point.x - 188),
+      y: Math.round(point.y - 24),
+      width: 376,
+      height: 140,
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: '#262c35',
+      webPreferences: {
+        preload: path.join(preloadDir, 'backpackProject.cjs'),
+        contextIsolation: true,
+        sandbox: true,
+      },
+    });
+    bindOwnedProjectSurface(window, project.id, 'widget', owner.windowId);
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    window.webContents.on('will-navigate', (event, target) => {
+      const destination = URL.parse(target);
+      if (destination?.protocol !== url.protocol || destination.host !== url.host) event.preventDefault();
+    });
+    proximaTimerWindow = window;
+    window.once('closed', () => {
+      if (proximaTimerWindow === window) proximaTimerWindow = null;
+      stopProximaFollow();
+      if (proximaFit) clearInterval(proximaFit);
+      proximaFit = null;
+    });
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        event.preventDefault();
+        hideProximaTimer(window);
+      }
+    });
+    try {
+      await window.loadURL(url.toString());
+      if (window.isDestroyed()) return;
+      await fitProximaTimer(window.isVisible() ? window : (window.showInactive(), window));
+      placeProximaAtCursor(window);
+      window.moveTop();
+      followProximaCursor(window);
+      if (proximaFit) clearInterval(proximaFit);
+      proximaFit = setInterval(() => void fitProximaTimer(window), 500);
+    } catch (error) {
+      if (!window.isDestroyed()) window.close();
+      console.warn('[papers] Proxima timer failed to open', error);
+    }
+  };
   hoverInputBridge = createHoverInputBridge({
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
@@ -2313,8 +2435,8 @@ async function bootstrap(): Promise<void> {
       }
     },
     onAltQRelease: () => widgetSession?.endAltQGesture(),
-    onAltW: (senderId) => { void widgetSession?.beginAltQGesture(senderId,'legacy'); },
-    onAltWRelease: () => widgetSession?.endAltQGesture(),
+    onAltW: () => { void beginProximaTimer(); },
+    onAltWRelease: () => stopProximaFollow(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);
